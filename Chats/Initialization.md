@@ -307,3 +307,87 @@ What I'd build:
 ### Question
 
 1. **Step 3:** go ahead, with the `hydrate` helper added to o2h (as `o2h/worker/edge.js`'s companion)? Or keep it inside the store page for now, until `mirror`'s shape settles?
+
+## Bruce's Response III
+
+Yes, please go ahead with hydrate helper added to o2h.
+## Implementation Notes III: step 3, `mirror` and the store
+
+### o2h: the hydrate helper
+
+In [o2h/worker/edge.ts](../../o2h/worker/edge.ts), the steps after the worker answers are now exported on their own. `renderViaEdge` uses them too.
+- `embeddedO2HData(container, config)`: the data embedded after the HTML.
+- `hydrateO2H(container, config, data, options?, hydrate?)`: builtIns.tree with `adopt: 'pending'`. It returns `{ pending }`.
+- `renderO2HOnPage(container, config, data, options?, hydrate?)`: renders on the page, for when the worker passed the data back.
+- **Pipes given as descriptors are made into pipes first** (`dataPipes`). That lets an app's JSON hold `usd` as `{ intl: 'NumberFormat', … }` and still hydrate.
+- `o2hRenderer(hydrate?)`: the three, plus `prepareO2HTransform`, in the shape `mirror` takes. `hydrate` passes more assignFrom options, such as a `registry` for managers.
+- **The README's "Edge first paint" section** describes them.
+- **Checked:** the old hash-based store page still works through `renderViaEdge`. I served a temporary copy, ran the old check (all rendered by the worker, 0 pending), and removed the copy.
+
+### navigate-gingerly: `mirror`
+
+[mirror.ts](../mirror.ts) is the page side:
+
+```js
+mirror({ worker, app, into, renderer: o2hRenderer(), appURL?, base?, onRender? })   // → { ready, refresh(), stop() }
+```
+
+- **The base** comes from the shell's `<base href>` (`document.baseURI`), as agreed. A path below it is mirrored to `<worker>/o2h-app/<key><path>`.
+- **The app is installed** once per worker, and again, once, when the worker answers `no app`.
+- **Navigations:**
+  - **Intercepted:** same-origin navigations under the base go through the Navigation API's `intercept`, with `scroll` and `focusReset` set to `after-transition`. `event.signal` cancels a navigation that a newer one replaced.
+  - **Left to the browser:** hash changes, downloads and form posts.
+  - **Without the API,** links are ordinary page loads, and the shell renders the new path.
+- **After a render:**
+  - the title comes from the route;
+  - **`markCurrent`** sets `aria-current="page"` on links in the container that point to the current page.
+- **Fallback and failures:**
+  - when the worker passes the VM back, the page renders it (`by: 'page'`);
+  - failures (no route, a failing source, an unreachable worker) go to `onRender` as `by: 'none'` with the reason, and the container is left as it was.
+- **Worker URL:** `worker` can be a function, so the store's "Worker" input is read on each navigation, and `refresh()` renders again after it changes.
+- **Types:** `MirrorOptions`, `MirrorRenderer`, `MirrorRendered` and `Mirror` are in the types file, and re-exported from `routes.js`. `package.json` exports `./mirror.js`.
+
+**Tests:**
+- **[tests/mirror.spec.ts](../tests/mirror.spec.ts) runs in Chromium, Firefox and WebKit.** Playwright's request routing stands in for both servers, so no real server is involved. It serves the shell for every path under `/app/` (as an SPA fallback would), the built modules, and a fake worker. A stand-in renderer checks what `mirror` does around it. The tests cover:
+  1. the first render: one install, insert, hydrate, title and `aria-current`;
+  2. clicking an in-app link, then Back and Forward, all through the worker, with **the shell loaded only once**;
+  3. a worker that lost the app (installed again, once);
+  4. the VM passed back (rendered on the page);
+  5. failures (reported, the container left as it was).
+- **All three browsers have the Navigation API** in Playwright 1.64.1 (Chromium 156, Firefox 157, WebKit 27.2). So the intercepted path ran everywhere, not just the fallback.
+- **One catch, found by the tests:** the app's key uses `crypto.subtle`, which exists only in **secure contexts** (https, or localhost). A page on plain http elsewhere can't prepare an app. `prepareO2HTransform` has the same limit, so this isn't new. The README says so.
+- **All 23 tests pass:** 8 in Node, plus 5 in each browser.
+
+### The store, rebuilt on `mirror`
+
+- **[o2h-edge/demo/store/app.js](../../o2h-edge/demo/store/app.js)** is the app.
+  - **Routes:**
+    - **Aligned:** `/products`, `/products/category/:name` and `/products/:id`.
+    - **Mapped:** `/` maps to `/products`, since the API has nothing at its root.
+    - **Layout:** the category nav is a layout source on every route.
+  - **Configs** are written with `` tree`…` `` and `each`. The links are relative (`products/${'?.id'}`, `products/category/${'?.'}`). `usd` is a descriptor.
+  - **It's a JS module rather than `app.json`,** because of the trees. Once built it's plain data, and `JSON.stringify(app)` is its JSON form. A build step could write the JSON later.
+- **[o2h-edge/demo/store/index.html](../../o2h-edge/demo/store/index.html)** is now the shell.
+  - It has `<base href="/demo/store/">`, the same CSS (with the IDs replaced by classes), a status line fed by `onRender`, and one `mirror` call.
+  - **The page's routing code is gone:** `views`, the `api` functions, `route()`, `show()`, `markCategory()`, and the hash wiring.
+  - The old hash-based page is in git history.
+- **[o2h-edge/imports.html](../../o2h-edge/imports.html)** maps `navigate-gingerly/`.
+- **o2h-edge's README** store section is updated.
+- **Checked in Chromium,** against `wrangler dev` and spa-ssi:
+  - **`/demo/store/`:** 4 category links, 20 cards, all rendered by the worker, 0 pending, images loaded, title "Fake Store".
+  - **A category link:** the URL becomes `/demo/store/products/category/jewelery`. The title is "jewelery", Jewelery is marked current, and 4 cards show.
+  - **A product:** the URL becomes `/demo/store/products/5`, with the product's title. No horizontal scroll at 375px.
+  - **Back** returns to the category, with its current link marked.
+  - **Only one document load** for the whole session. About 125 ms per navigation once warm, since each is one request with the sources fetched in parallel on the edge.
+
+### One problem: deep links in development
+
+**Reloading `/demo/store/products/3` shows spa-ssi's site map,** not the store. spa-ssi's fallback for a missing path serves the **site root's** `index.html`, and o2h-edge has none. The README notes this, and says to start from `/demo/store/`.
+
+The fix belongs in spa-ssi: for a missing path, serve **the nearest ancestor directory's `index.html`** (here `/demo/store/index.html`). Only when there's none would it fall back to the root's, or the site map. That's the same "a directory's own index.html" idea as your last spa-ssi change, applied to the fallback. It only applies to extensionless paths, as now (missing `.js` or `.css` stay 404s).
+
+### Questions
+
+1. **spa-ssi's fallback:** shall I make that change? spa-ssi isn't in the workspace any more, so I'd need it copied back in, or you could make it.
+2. **`app.js` vs `app.json`:** is the JS module fine for the store? Or do you want a small build step that writes `app.json` from it, so the page imports JSON, as originally envisioned?
+3. **Links outside the container:** `markCurrent` only looks inside `into`. Should it also mark the shell's own links, such as a header nav? I left them alone, since the shell is the app's own markup.

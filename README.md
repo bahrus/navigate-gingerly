@@ -62,6 +62,7 @@ The core is pure (no DOM, no fetch, no o2h), so the page and the worker share it
 | `routes.js` | `matchRoute(app, path)`, `sourcesFor(app, match)`, `composeVM(match, results)`, `titleFor(route, vm)`, `pathBelow(base, pathname)`, `workerURL(worker, key, path)` |
 | `app.js` | `validateApp(app)`, `prepareApp(app, prepareTransform)` (o2h's `prepareO2HTransform` fits), `appKey(installed)` |
 | `modules.js` | `resolveModules(app, appURL)`, `isModuleReference(value)` |
+| `mirror.js` | `mirror(options)`, `markCurrent(container, href)`: the page side (below) |
 
 ```js
 import app from './app.json' with { type: 'json' };
@@ -73,4 +74,29 @@ const resolved = await resolveModules(app, new URL('./app.json', import.meta.url
 const { key, app: installed } = await prepareApp(resolved, prepareO2HTransform);   // key: app-<32 hex digits>
 ```
 
-Still to come: the worker's endpoints (in o2h-edge), and `mirror`, the page side, on the Navigation API.
+## mirror: the page side
+
+The app's own server serves its shell for every path under the app (an SPA fallback). The shell names the app's base, and calls `mirror`:
+
+```html
+<base href="/store/">
+<main></main>
+<script type="module">
+    import { mirror } from 'navigate-gingerly/mirror.js';
+    import { o2hRenderer } from 'o2h/worker/edge.js';
+    import { app } from './app.js';
+
+    mirror({ worker: 'https://o2h-edge.<your-subdomain>.workers.dev', app, into: document.querySelector('main'), renderer: o2hRenderer() });
+</script>
+```
+
+- **The path below the base is mirrored to the worker:** `/store/products/3` → `<worker>/o2h-app/<key>/products/3`. The worker ([o2h-edge](https://github.com/bahrus/o2h-edge)) fetches the route's sources and returns one HTML fragment, with the VM embedded. mirror puts it in `into`, and the renderer hydrates it.
+- **Installs the app** (`prepareApp`, then `PUT <worker>/o2h-app/<key>`) once per worker, and again, once, if the worker answers `no app`.
+- **In-app navigations** (same origin, under the base) are intercepted with the Navigation API, so Back, Forward, scroll and focus are the browser's. Without the Navigation API, links are ordinary navigations, and the shell renders the new path.
+- **Links in the app's trees are relative** (`href="products/3"`), resolving against the `<base href>`, so an app works under any base.
+- **After each render:** the title comes from the route, and links in the container to the current page get `aria-current="page"`.
+- **Falls back:** if the worker passes the VM back, the page renders it. Failures are reported to `onRender`, and the container is left as it was.
+- **Options:** `worker` (a URL, or a function read on each navigation), `app`, `into`, `renderer` (o2h's `o2hRenderer()`), `appURL` (for relative module references; default: the document's base URL), `base` (default: the `<base href>`'s path), `onRender({ path, by, vm, route, elapsed, pending, error })`. It returns `{ ready, refresh(), stop() }`.
+- **Needs a secure context** (https, or localhost): the app's key is a SHA-256, from `crypto.subtle`.
+
+The [store demo](https://github.com/bahrus/o2h-edge/tree/baseline/demo/store) in o2h-edge uses it.

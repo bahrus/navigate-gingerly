@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- An app's shell, served for every path under /app/ (as an SPA fallback would) -->
+    <base href="/app/">
+    <title>Shell</title>
+    <script type="importmap">{ "imports": { "navigate-gingerly/": "/src/" } }</script>
+</head>
+<body>
+    <a id="home" href="./">Home</a>
+    <main></main>
+    <script type="module">
+        import { mirror } from 'navigate-gingerly/mirror.js';
+
+        // A stand-in for o2h's renderer: the tests check what mirror does around it
+        const renderer = {
+            prepare: async (config, options) => ({ key: `o2h-${JSON.stringify(config).length}`, transform: { config, options } }),
+            embedded: container => JSON.parse(container.querySelector('script[type="application/json"]')?.textContent ?? 'null'),
+            hydrate: async (container, config, vm) => {
+                container.dataset.hydrated = JSON.stringify(vm.route);
+                return { pending: container.querySelectorAll('[data-pending]').length };
+            },
+            render: async (container, config, vm) => {
+                container.innerHTML = `<p class="page-rendered">${vm.data.title}</p>`;
+            },
+        };
+        const app = {
+            api: 'https://api.test',
+            routes: [
+                { pattern: '/', sources: { data: '/products' }, config: { map: { data: 'list' } }, title: 'Home' },
+                { pattern: '/products/:id', config: { map: { data: 'item' } }, title: '?.data?.title' },
+            ],
+        };
+        window.renders = [];
+        window.loads = (Number(sessionStorage.getItem('loads') ?? 0) + 1);
+        sessionStorage.setItem('loads', String(window.loads));
+        window.store = mirror({
+            worker: '/worker',
+            app,
+            into: document.querySelector('main'),
+            renderer,
+            onRender: rendered => window.renders.push(rendered),
+        });
+    </script>
+</body>
+</html>

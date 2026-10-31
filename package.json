@@ -35,6 +35,10 @@
     "./modules.js": {
       "types": "./modules.ts",
       "default": "./modules.js"
+    },
+    "./mirror.js": {
+      "types": "./mirror.ts",
+      "default": "./mirror.js"
     }
   },
   "types": "types/navigate-gingerly/types.d.ts",

@@ -1,0 +1,136 @@
+/**
+ * mirror: the page side. The app's own server serves its shell (an SPA fallback for deep paths); mirror asks the
+ * worker for the same path, mirrored (`<worker>/o2h-app/<key><path below the base>`), puts the fragment it gets
+ * into a container, and hydrates it. In-app navigations are intercepted with the Navigation API and rendered the
+ * same way, so Back, Forward, scroll and focus are the browser's. Without the Navigation API, links are ordinary
+ * navigations: the shell loads again, and mirror renders the new path.
+ *
+ *     <base href="/store/">   (in the shell: the app's base, which relative links in the app's trees resolve against)
+ *
+ *     import app from './app.json' with { type: 'json' };
+ *     import { mirror } from 'navigate-gingerly/mirror.js';
+ *     import { o2hRenderer } from 'o2h/worker/edge.js';
+ *     mirror({ worker: 'https://o2h-edge.example.workers.dev', app, into: document.querySelector('main'), renderer: o2hRenderer() });
+ *
+ * The app is installed with the worker once (and again if the worker has lost it). If the worker can't render a
+ * route, it passes the VM back and the page renders it. After each render, the title is set from the route, and
+ * links in the container to the current page get `aria-current="page"`.
+ */
+
+import type { AppRoute, Mirror, MirrorOptions, MirrorRendered, PreparedApp, RouteMatch } from './types/navigate-gingerly/types.js';
+import { prepareApp } from './app.js';
+import { resolveModules } from './modules.js';
+import { matchRoute, pathBelow, titleFor, workerURL } from './routes.js';
+
+/** `<worker> <key>`: the apps each worker is known to hold. */
+const installed = new Set<string>();
+
+/** Mirror the page's path to the worker, now and on each in-app navigation (see the module comment). */
+export function mirror<Config, Options>(options: MirrorOptions<Config, Options>): Mirror {
+    const { app, into, renderer, onRender } = options;
+    const base = options.base ?? new URL(document.baseURI).pathname;
+    const workerOf = () => (typeof options.worker === 'function' ? options.worker() : options.worker).replace(/\/+$/, '');
+
+    // The app with its code loaded, and prepared to install (once)
+    const resolving = resolveModules(app, options.appURL ?? document.baseURI);
+    let preparing: Promise<PreparedApp> | undefined;
+    const prepared = () => (preparing ??= resolving.then(resolved => prepareApp(resolved, renderer.prepare)));
+
+    async function install(worker: string, { key, app: body }: PreparedApp): Promise<void> {
+        const response = await fetch(`${worker}/o2h-app/${key}`, { method: 'PUT', body: JSON.stringify(body) });
+        if (!response.ok) throw new Error(`installing the app: ${await errorOf(response)}`);
+        installed.add(`${worker} ${key}`);
+    }
+
+    async function show(url: URL, signal?: AbortSignal): Promise<MirrorRendered> {
+        const path = pathBelow(base, url.pathname) ?? '/';
+        const started = performance.now();
+        const done = (rendered: Omit<MirrorRendered, 'path' | 'elapsed'>): MirrorRendered => {
+            const result = { path, elapsed: Math.round(performance.now() - started), ...rendered };
+            onRender?.(result);
+            return result;
+        };
+        try {
+            const resolved = await resolving;
+            const match = matchRoute(resolved, path) as RouteMatch<AppRoute<Config>> | undefined;
+            if (!match) return done({ by: 'none', pending: 0, error: `no route of the app matches "${path}"` });
+            const { route, index } = match;
+            const worker = workerOf();
+            const app = await prepared();
+            const request = async () => {
+                if (!installed.has(`${worker} ${app.key}`)) await install(worker, app);
+                return fetch(workerURL(worker, app.key, path), { signal });
+            };
+            let response = await request();
+            // The worker lost the app (e.g. a restarted `wrangler dev`): install it again, once
+            if (response.status === 404 && (await errorOf(response.clone())).includes('no app')) {
+                installed.delete(`${worker} ${app.key}`);
+                response = await request();
+            }
+            const { config } = route;
+            const { options: appOptions } = resolved;
+            if ((response.headers.get('Content-Type') ?? '').startsWith('text/html')) {
+                const html = await response.text();
+                signal?.throwIfAborted();
+                into.innerHTML = html;
+                const vm = renderer.embedded(into, config);
+                const { pending = 0 } = (await renderer.hydrate(into, config, vm, appOptions)) ?? {};
+                finish(route, vm);
+                return done({ by: 'worker', vm, route: index, pending });
+            }
+            if (!response.ok) throw new Error(await errorOf(response));
+            // The VM, passed back: render it here
+            const vm = await response.json();
+            signal?.throwIfAborted();
+            await renderer.render(into, config, vm, appOptions);
+            finish(route, vm);
+            return done({ by: 'page', vm, route: index, pending: 0, error: response.headers.get('X-O2H-Error') ?? undefined });
+        } catch (e) {
+            if ((e as Error).name === 'AbortError') throw e;   // a newer navigation took over
+            return done({ by: 'none', pending: 0, error: (e as Error).message });
+        }
+    }
+
+    /** After a render: the title, and which links are the current page. */
+    function finish(route: AppRoute<Config>, vm: unknown): void {
+        const title = titleFor(route, vm);
+        if (title !== undefined) document.title = title;
+        markCurrent(into, location.href);
+    }
+
+    // In-app navigations: same origin, under the base, a route of the app
+    const navigation = (globalThis as any).navigation;
+    const onNavigate = (event: any) => {
+        if (!event.canIntercept || event.hashChange || event.downloadRequest !== null || event.formData) return;
+        const url = new URL(event.destination.url);
+        if (url.origin !== location.origin) return;
+        const path = pathBelow(base, url.pathname);
+        if (path === undefined) return;
+        event.intercept({
+            handler: () => show(url, event.signal),
+            scroll: 'after-transition',
+            focusReset: 'after-transition',
+        });
+    };
+    navigation?.addEventListener('navigate', onNavigate);
+
+    return {
+        ready: show(new URL(location.href)),
+        refresh: () => show(new URL(location.href)),
+        stop: () => navigation?.removeEventListener('navigate', onNavigate),
+    };
+}
+
+/** `aria-current="page"` on the container's links to the page (the hash aside); removed from the others. */
+export function markCurrent(container: Element, href: string): void {
+    const here = href.split('#')[0];
+    for (const a of container.querySelectorAll<HTMLAnchorElement>('a[href]')) {
+        if (a.href.split('#')[0] === here) a.setAttribute('aria-current', 'page');
+        else if (a.getAttribute('aria-current') === 'page') a.removeAttribute('aria-current');
+    }
+}
+
+async function errorOf(response: Response): Promise<string> {
+    const { error } = await response.json().catch(() => ({ error: response.statusText }));
+    return `${response.status} ${error ?? ''}`.trim();
+}
