@@ -1,0 +1,19 @@
+{
+	"compilerOptions": {
+		"target": "ESNext",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"sourceMap": false,
+		"newLine": "LF",
+		"strict": true,
+		"skipLibCheck": true
+	},
+	"include": [
+		"*.ts",
+		"types/navigate-gingerly/types.d.ts"
+	],
+	"exclude": [
+		"node_modules",
+		"playwright.config.ts"
+	]
+}

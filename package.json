@@ -1,20 +1,59 @@
 {
   "name": "navigate-gingerly",
   "version": "0.0.0",
-  "description": "",
-  "homepage": "https://github.com/bahrus/navigate-gingerly#readme",
-  "bugs": {
-    "url": "https://github.com/bahrus/navigate-gingerly/issues"
+  "description": "Browser paths that mirror API paths, rendered as HTML by an o2h-edge-like worker, with the Navigation API",
+  "type": "module",
+  "main": "routes.js",
+  "module": "routes.js",
+  "keywords": [
+    "navigation",
+    "routing",
+    "o2h",
+    "html"
+  ],
+  "files": [
+    "*.js",
+    "*.ts",
+    "!playwright.config.ts",
+    "types/navigate-gingerly/types.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./routes.ts",
+      "default": "./routes.js"
+    },
+    "./routes.js": {
+      "types": "./routes.ts",
+      "default": "./routes.js"
+    },
+    "./app.js": {
+      "types": "./app.ts",
+      "default": "./app.js"
+    },
+    "./modules.js": {
+      "types": "./modules.ts",
+      "default": "./modules.js"
+    }
+  },
+  "types": "types/navigate-gingerly/types.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/bahrus/navigate-gingerly.git"
   },
-  "license": "MIT",
   "author": "Bruce B. Anderson <anderson.bruce.b@gmail.com>",
-  "type": "module",
-  "main": "index.js",
-  "scripts": {
-    "test": "playwright test"
-  }
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/bahrus/navigate-gingerly/issues"
+  },
+  "homepage": "https://github.com/bahrus/navigate-gingerly#readme"
 }

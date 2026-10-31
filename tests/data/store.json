@@ -1,0 +1,17 @@
+{
+    "api": "https://fakestoreapi.com",
+    "layout": { "categories": "/products/categories" },
+    "routes": [
+        { "pattern": "/", "sources": { "data": "/products" }, "config": { "map": { "categories": "nav", "data": "grid" } }, "title": "Fake Store" },
+        { "pattern": "/products", "config": { "map": { "categories": "nav", "data": "grid" } }, "title": "Fake Store" },
+        { "pattern": "/products/categories", "layout": false, "config": { "map": { "data": "nav" } } },
+        { "pattern": "/products/category/:name", "config": { "map": { "categories": "nav", "data": "grid" } }, "title": "?.route?.name" },
+        { "pattern": "/products/:id", "config": { "map": { "data": "article" } }, "title": "?.data?.title" }
+    ],
+    "options": {
+        "pipes": {
+            "usd": { "intl": "NumberFormat", "locale": "en-US", "options": { "style": "currency", "currency": "USD" } },
+            "plainText": { "import": "./pipes.js", "export": "plainText" }
+        }
+    }
+}
