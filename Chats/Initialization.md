@@ -234,3 +234,76 @@ The store's links are hashes today (`#product/3`). With real paths, the fragment
 1. **The `<base href>` approach** for links and for finding the base?
 2. **Step 2:** go ahead with the edge endpoints in o2h-edge, with navigate-gingerly as a local dependency until it's published?
 3. **The `aria-current` convention in `mirror`** instead of an `eq` pipe: OK?
+
+## Bruce's Response II
+
+> 1. **The `<base href>` approach** for links and for finding the base?
+
+Yes
+
+
+> 2. **Step 2:** go ahead with the edge endpoints in o2h-edge, with navigate-gingerly as a local dependency until it's published?
+
+Sounds good.
+
+> 3. **The `aria-current` convention in `mirror`** instead of an `eq` pipe: OK?
+
+Yes.
+## Implementation Notes II: step 2, the edge endpoints
+
+**In o2h-edge:**
+- **[src/apps.ts](../../o2h-edge/src/apps.ts)** (new):
+  - **`PUT /o2h-app/<key>`** installs an app. It checks:
+    - the key's form (`app-` and 32 hex digits) and the size (`MAX_APP_BYTES`, 1 MB by default, since an app holds several transforms);
+    - that the body is JSON, and passes `validateApp`, which now also runs on the worker;
+    - that each route names a transform the app holds;
+    - that the key matches the content, through navigate-gingerly's `appKey`.
+    
+    Apps are stored in the same KV namespace as transforms, with a little metadata (size, date, the route patterns).
+  - **`GET /o2h-app/<key>`** returns the app exactly as stored, cacheable for good.
+  - **`GET /o2h-app/<key>/<path>`** renders a path of the app:
+    1. matches the route (`matchRoute`), and works out its sources (`sourcesFor`);
+    2. checks each source URL with the existing `refuseApiUrl` (sandbox, allowlist, https, public hosts);
+    3. fetches all the sources in parallel with the existing `guardedFetch` (GET only, JSON only, a size cap, a timeout, no caller headers);
+    4. composes the VM (`composeVM`), and renders it with the route's transform.
+    
+    For the rendering, the VM is handed to o2h's worker core (`handleO2HRequest`) as if it were an API's JSON response. So embedding, stand-ins and the fallback (the VM passed back with `X-O2H-Error` if rendering fails) behave exactly as `/render` does, **with no change to o2h**.
+  - **Errors:**
+    - `404 no app "…"`, which the page will treat as "install it again", as `renderViaEdge` does with transforms;
+    - `404` when no route matches;
+    - `403` for a refused source;
+    - a failing source answers with its own status, naming the source (`the source "data": …`).
+  - **Installed apps are cached in memory per isolate** (the 50 most recent), since an app never changes.
+- **[src/index.ts](../../o2h-edge/src/index.ts):** the routes, inside the same per-IP rate limit and CORS as the other endpoints. The root's description lists the new endpoints.
+- **[src/transforms.ts](../../o2h-edge/src/transforms.ts):** `GET /transforms` now lists only `o2h-…` keys, so apps don't show up as transforms.
+- **wrangler.jsonc:** the `MAX_APP_BYTES` var, and the KV comment mentions apps. `worker-configuration.d.ts` is regenerated (`npm run types`).
+- **package.json:** `"navigate-gingerly": "file:../navigate-gingerly"`, linked like o2h and assign-gingerly.
+- **README:** the three endpoints in the table, and the app cap in Guards.
+- **Tests ([test/edge.test.mjs](../../o2h-edge/test/edge.test.mjs)):** a small stand-in shop API, apps prepared with the real `prepareApp` and `prepareO2HTransform`, and 5 new tests:
+  - install, re-install, a wrong key, an invalid app, a missing transform, read back, not listed as a transform;
+  - an aligned path: the HTML, the embedded VM `{ data, route: { id } }`, and the visitor's query string not reaching the API;
+  - a layout source plus a mapped source fetched together, and route parameters rendered (`<h2>hats</h2>`);
+  - a function pipe left pending (`data-pending`);
+  - no app, no route, a failing source, wrong methods.
+  
+  **All 21 pass** (`npm test`). `tsc --noEmit` is clean.
+
+**In navigate-gingerly:** `routes.ts` now re-exports the package's types, since the package's exports don't reach into `types/`. The 8 core tests still pass.
+
+### Next: step 3, `mirror` and the store
+
+What I'd build:
+- **`mirror({ worker, app, appURL, into, prepare, hydrate })`:**
+  - The base comes from `document.baseURI` (the shell's `<base href>`).
+  - `prepare` is o2h's `prepareO2HTransform`.
+  - `hydrate(container, config, vm, pipes)` runs builtIns.tree with `adopt: 'pending'`. o2h could export a ready-made one next to `renderViaEdge`, so a page needn't write it.
+  - It installs the app once per worker, re-installing on `no app`.
+  - It renders the current path, then intercepts in-app navigations with the Navigation API, with `event.signal` cancelling a superseded fetch.
+  - It inserts, hydrates, sets the title, and marks `aria-current`.
+  - When the worker fails, it renders on the page from the VM the worker passed back, or shows an error.
+- **The store** at `o2h-edge/demo/store/`: a shell with `<base href>`, `app.json` (aligned routes, with categories as a layout source), and one `mirror` call. Browser tests come with it, so the Playwright browser projects get added here.
+- **One thing to check:** spa-ssi's SPA fallback for deep paths like `/o2h-edge/demo/store/products/3`. Your recent index.html change is in the copy of spa-ssi I edited, not yet in o2h-edge's node_modules, so I'll verify which serves what.
+
+### Question
+
+1. **Step 3:** go ahead, with the `hydrate` helper added to o2h (as `o2h/worker/edge.js`'s companion)? Or keep it inside the store page for now, until `mirror`'s shape settles?

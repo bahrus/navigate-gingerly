@@ -14,6 +14,12 @@
 
 import type { AppLike, RouteLike, RouteMatch } from './types/navigate-gingerly/types.js';
 
+// For consumers (the package's exports don't reach into types/)
+export type {
+    AppLike, AppRoute, InstalledApp, InstalledRoute, ModuleReference, NavigateApp, PreparedApp, PreparedTransform,
+    PrepareTransform, RouteLike, RouteMatch,
+} from './types/navigate-gingerly/types.js';
+
 /** The source name an aligned route's API response gets in the VM. */
 export const ALIGNED_SOURCE = 'data';
 
