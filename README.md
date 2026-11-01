@@ -8,7 +8,7 @@ The biggest roadblock is that in today's environment, backend API's that provide
 
 So o2h-edge is a solution to this problem -- it tries to reduce the cost by providing a predictable, easy, reusable, declarative pattern for converting JSON API's into HTML API's with as much flexibility as possible, while adhering to data-driven configuration.  It includes a strategy for hydrating back into objects in the web browser, that benefits from adopting a common declarative approach uniformly to all APIs.
 
-Suppose the JSON API, at it's core, follows a RESTful paradigm.  Using o2h-edge essentially ensures that the same RESTful routing will flow through, as it is just a pass-through combined with a significant data format transformation.
+Suppose the JSON API, at its core, follows a RESTful paradigm.  Using o2h-edge essentially ensures that the same RESTful routing will flow through, as it is just a pass-through combined with a significant data format transformation.
 
 The final piece to the routing puzzle is how the backend api routing relates to front end routing.
 
