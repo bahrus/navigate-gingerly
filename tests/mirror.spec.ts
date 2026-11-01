@@ -117,6 +117,14 @@ test('the worker passes the VM back: the page renders it', async ({ page }) => {
     await expect(page).toHaveTitle('Passed back');
 });
 
+test('the shell opened by its file name (index.html) renders the base', async ({ page }) => {
+    const worker = await serve(page);
+    await page.goto(`${ORIGIN}/app/index.html`);
+    await expect(page.locator('main li')).toHaveCount(2);
+    expect(await lastRender(page)).toMatchObject({ by: 'worker', path: '/' });
+    expect(worker.renders).toEqual(['/']);
+});
+
 test('failures are reported, and the container is left as it was', async ({ page }) => {
     await serve(page);
     await page.goto(`${ORIGIN}/app/products/404`);

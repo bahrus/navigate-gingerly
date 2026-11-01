@@ -178,6 +178,7 @@ export function titleFor(route, vm) {
 /**
  * The path below the app's base, or undefined if the pathname isn't under it.
  * `pathBelow('/store/', '/store/products/3')` → `/products/3`; `/store` and `/store/` → `/`.
+ * A trailing `index.html` names its directory, as a static server serves it: `/store/index.html` → `/`.
  */
 export function pathBelow(base, pathname) {
     const prefix = base.replace(/\/+$/, '');
@@ -185,7 +186,8 @@ export function pathBelow(base, pathname) {
         return '/';
     if (!pathname.startsWith(`${prefix}/`))
         return undefined;
-    return pathname.slice(prefix.length);
+    const path = pathname.slice(prefix.length);
+    return path.endsWith('/index.html') ? path.slice(0, -'index.html'.length) : path;
 }
 /** Where a worker renders an installed app's path: `<worker>/o2h-app/<key><path>`. */
 export function workerURL(worker, key, path) {

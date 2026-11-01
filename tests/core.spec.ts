@@ -97,6 +97,10 @@ test.describe('routes', () => {
     expect(pathBelow('/store', '/storefront')).toBeUndefined();
     expect(pathBelow('/', '/products')).toBe('/products');
     expect(pathBelow('/o2h-edge/demo/store/', '/other/')).toBeUndefined();
+    // A trailing index.html names its directory
+    expect(pathBelow('/store/', '/store/index.html')).toBe('/');
+    expect(pathBelow('/store/', '/store/products/index.html')).toBe('/products/');
+    expect(pathBelow('/store/', '/store/products/index.htm')).toBe('/products/index.htm');
     expect(workerURL('http://localhost:8787/', 'app-1', '/products/3')).toBe('http://localhost:8787/o2h-app/app-1/products/3');
   });
 });

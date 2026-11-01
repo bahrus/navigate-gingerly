@@ -432,3 +432,57 @@ What stays the same:
 - **o2h-edge's README:** deep links work from the spa-ssi version after 0.0.30. With 0.0.30, start from `/demo/store/`.
 
 **To use it in o2h-edge,** spa-ssi needs a new version published. o2h-edge's `node_modules/spa-ssi` is the installed 0.0.30, not a link. I tested by running the workspace copy's `serve.js` from o2h-edge's folder. Nothing is committed.
+
+<details>
+  <summary>Catching up on how things work
+
+## Bruce's Query I
+
+I published the spa-ssi and updated the references, and then removed spa-ssi from the root folder.
+
+If I open http://localhost:8000/demo/store/ I see a nice page that seems to have content coming from http://localhost:8000/demo/store/index.html, that displays a list of products.
+
+What is a bit surprising is that if I open http://localhost:8000/demo/store/index.html I get:
+
+> Fake Store
+> Worker
+> http://localhost:8787
+> no route of the app matches "/index.html". Is the worker running (npm run dev)?
+
+I guess this is fine, but wanted to confirm there isn't an easy fix for this.
+
+If not, I think maybe ideally, the sitemap I get when I open:
+
+http://localhost:8000/
+
+would be smart enough to know that it should point to /store/ rather than store/index.html :
+
+![alt text](image.png)
+
+Can you see if there's a simple fix one way or another?
+
+Please add your response within this details section.
+
+## Claude's Response I
+
+**Yes, there's an easy fix, and it's in navigate-gingerly:** a trailing `index.html` now names its directory, as a static server treats it. So `/demo/store/index.html` is the store's base, path `/`.
+
+- **[routes.ts](../routes.ts):** in `pathBelow`, `/store/index.html` → `/`, and `/store/products/index.html` → `/products/`. Only the exact name `index.html` is treated this way. `mirror` uses `pathBelow`, so it renders the base there.
+- **The URL stays `…/index.html`.** Links still work, since they resolve against the `<base href>`, not the page's URL. Changing the address bar to `/demo/store/` would mean replacing the history entry. I left it alone, since nothing depends on it.
+- **Tests:**
+  - three `pathBelow` assertions in [core.spec.ts](../tests/core.spec.ts);
+  - a new browser test in [mirror.spec.ts](../tests/mirror.spec.ts): the shell opened as `/app/index.html` renders the list.
+  
+  **All 26 pass** (8 in Node, 6 in each browser).
+- **Checked in the real store,** with your published spa-ssi 0.0.31 in o2h-edge:
+  - `/demo/store/index.html` gives 20 products, rendered by the worker, titled "Fake Store";
+  - a deep link, `/demo/store/products/2`, gives the product and its title;
+  - clicking a category from there goes to `/demo/store/products/category/electronics`.
+
+**The site map** could also be made to link to `store/` rather than `store/index.html`. In spa-ssi's `renderSiteMap`, a file named `index.html` would be listed by its directory's path. That's a few lines, but spa-ssi isn't in the workspace now. With the fix above, both links work, so I'd only do it if you'd like the site map tidier. Shall I, if you copy it back in?
+
+
+
+</details>
+
+
