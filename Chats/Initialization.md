@@ -434,7 +434,7 @@ What stays the same:
 **To use it in o2h-edge,** spa-ssi needs a new version published. o2h-edge's `node_modules/spa-ssi` is the installed 0.0.30, not a link. I tested by running the workspace copy's `serve.js` from o2h-edge's folder. Nothing is committed.
 
 <details>
-  <summary>Catching up on how things work
+  <summary>Catching up on how things work</summary>
 
 ## Bruce's Query I
 
