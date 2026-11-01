@@ -391,3 +391,44 @@ The fix belongs in spa-ssi: for a missing path, serve **the nearest ancestor dir
 1. **spa-ssi's fallback:** shall I make that change? spa-ssi isn't in the workspace any more, so I'd need it copied back in, or you could make it.
 2. **`app.js` vs `app.json`:** is the JS module fine for the store? Or do you want a small build step that writes `app.json` from it, so the page imports JSON, as originally envisioned?
 3. **Links outside the container:** `markCurrent` only looks inside `into`. Should it also mark the shell's own links, such as a header nav? I left them alone, since the shell is the app's own markup.
+
+## Bruce's Response IV
+
+? 1. **spa-ssi's fallback:**
+
+I've added (temporarily) the source code [for spa-ssi](../../spa-ssi/), so that you make fix the issue as described.  Let's start there.
+
+Assuming the demos work without addressing points 2 and 3, I will study how the demos work before providing my input on those questions.
+
+## Implementation Notes IV: spa-ssi's fallback
+
+**In [spa-ssi/serve.js](../../spa-ssi/serve.js):** a missing path is now answered with **the `index.html` of the nearest directory above it that has one**, searching up to the site root and never above it. Before, it was always the root's `index.html`. A new method, `nearestIndex(filepath)`, does the search, and the fallback in the `catch` block calls it.
+
+What stays the same:
+- **With no nearer `index.html`,** it's the root's, as before.
+- **With none at all,** it's the site map, as before.
+- **Missing files with a known extension** (`.js`, `.css`, images …) are still 404s, so a missing module isn't answered with a page.
+- **Includes** in the page served resolve relative to that page's own directory, as for any page.
+
+**One behavior change to be aware of:** a site with an `index.html` in a subdirectory, and missing paths below it, now gets that subdirectory's page rather than the root's. That's the point of the change, but it applies to every site served, not just apps.
+
+**Checked:**
+- **On a scratch site** (a root `index.html`, plus `app/index.html` with an include):
+
+  | Request | Answer |
+  |---|---|
+  | `/app/products/3`, `/app/sub/deep/er`, `/app/missing.html` | the app's page, include processed |
+  | `/x`, `/other/x` | the root's page |
+  | `/app/products/3.js` | 404 |
+  | `/app` | 301 to `/app/` |
+  | `/other/` | its site map |
+  | `/../../etc/passwd` | the root's page, so nothing outside the root is reached |
+
+  On a second site with no root `index.html`, `/app/products/3` gets the app's page, and `/nowhere/x` the site map.
+- **The store, served by this spa-ssi:** reloading `/demo/store/products/3` gives the store's shell. `mirror` renders "Mens Cotton Jacket" through the worker and sets the title, and clicking a category from there works. The rest of the store check is unchanged: one document load, with the rest intercepted.
+
+**Docs:**
+- **spa-ssi's README:** "Support for SPA" now describes the nearest-`index.html` fallback, and that missing files with known extensions are 404s.
+- **o2h-edge's README:** deep links work from the spa-ssi version after 0.0.30. With 0.0.30, start from `/demo/store/`.
+
+**To use it in o2h-edge,** spa-ssi needs a new version published. o2h-edge's `node_modules/spa-ssi` is the installed 0.0.30, not a link. I tested by running the workspace copy's `serve.js` from o2h-edge's folder. Nothing is committed.
