@@ -135,3 +135,74 @@ test('failures are reported, and the container is left as it was', async ({ page
     expect(await lastRender(page)).toMatchObject({ by: 'none', error: 'no route of the app matches "/carts/1"' });
     await expect(page.locator('main')).toBeEmpty();
 });
+
+test('transition: in-app navigations swap inside a view transition, typed by direction; the first render is not animated', async ({ page }) => {
+    await serve(page);
+    // Record each view transition: its types, and whether the new page was hydrated when its snapshot was taken
+    await page.addInitScript(() => {
+        const w = window as any;
+        w.started = [];
+        const start = document.startViewTransition?.bind(document);
+        if (!start) return;
+        (document as any).startViewTransition = (arg: any) => {
+            const t = start(arg);
+            const record: any = { types: typeof arg === 'function' ? document.documentElement.dataset.transitionTypes?.split(' ') : arg.types };
+            w.started.push(record);
+            t.updateCallbackDone.then(() => { record.hydrated = document.querySelector('main')!.dataset.hydrated ?? null; });
+            return t;
+        };
+    });
+    await page.goto(`${ORIGIN}/app/?transition`);
+    await expect(page.locator('main li')).toHaveCount(2);
+    test.skip(!(await hasNavigation(page)) || !(await page.evaluate(() => 'startViewTransition' in document)), 'needs the Navigation API and view transitions');
+    const started = () => page.evaluate(() => (window as any).started);
+    expect(await started()).toEqual([]);
+
+    await page.locator('main a', { hasText: 'Bag' }).click();
+    await expect(page.locator('main h2')).toHaveText('Bag');
+    await expect.poll(started).toEqual([{ types: ['forward'], hydrated: '{"id":"1"}' }]);
+
+    await page.goBack();
+    await expect(page.locator('main li')).toHaveCount(2);
+    await expect.poll(started).toHaveLength(2);
+    expect((await started())[1].types).toEqual(['back']);
+
+    // The function decides: more types, or none
+    await page.evaluate(() => { (window as any).wanted = ['detail']; });
+    await page.locator('main a', { hasText: 'Hat' }).click();
+    await expect(page.locator('main h2')).toHaveText('Hat');
+    await expect.poll(started).toHaveLength(3);
+    expect((await started())[2].types).toEqual(['forward', 'detail']);
+    await page.evaluate(() => { (window as any).wanted = false; });
+    await page.locator('main a', { hasText: 'All' }).click();
+    await expect(page.locator('main li')).toHaveCount(2);
+    expect(await started()).toHaveLength(3);
+    expect(await page.evaluate(() => (window as any).transitions)).toEqual([
+        { from: '/', to: '/products/1', direction: 'forward' },
+        { from: '/products/1', to: '/', direction: 'back' },
+        { from: '/', to: '/products/2', direction: 'forward' },
+        { from: '/products/2', to: '/', direction: 'forward' },
+    ]);
+
+    // refresh() isn't animated
+    await page.evaluate(() => (window as any).store.refresh());
+    await expect.poll(() => renders(page)).toBe(6);
+    expect(await started()).toHaveLength(3);
+});
+
+test('transition: a newer navigation skips the running transition, and the newer page wins', async ({ page }) => {
+    await serve(page);
+    await page.goto(`${ORIGIN}/app/?transition`);
+    await expect(page.locator('main li')).toHaveCount(2);
+    test.skip(!(await hasNavigation(page)) || !(await page.evaluate(() => 'startViewTransition' in document)), 'needs the Navigation API and view transitions');
+    // Two navigations, back to back
+    await page.evaluate(() => {
+        const nav = (window as any).navigation;
+        nav.navigate('products/1');
+        nav.navigate('products/2');
+    });
+    await expect(page.locator('main h2')).toHaveText('Hat');
+    expect(page.url()).toBe(`${ORIGIN}/app/products/2`);
+    await expect(page).toHaveTitle('Hat');
+    await expect.poll(() => page.evaluate(() => document.documentElement.dataset.transitionTypes ?? null)).toBeNull();
+});

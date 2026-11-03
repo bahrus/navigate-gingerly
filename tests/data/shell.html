@@ -33,6 +33,12 @@
             ],
         };
         window.renders = [];
+        // ?transition: animate navigations, recording each one asked about; window.wanted is what's answered
+        window.transitions = [];
+        window.wanted = true;
+        const transition = new URLSearchParams(location.search).has('transition')
+            ? navigation => (window.transitions.push(navigation), window.wanted)
+            : undefined;
         window.loads = (Number(sessionStorage.getItem('loads') ?? 0) + 1);
         sessionStorage.setItem('loads', String(window.loads));
         window.store = mirror({
@@ -41,6 +47,7 @@
             into: document.querySelector('main'),
             renderer,
             onRender: rendered => window.renders.push(rendered),
+            transition,
         });
     </script>
 </body>

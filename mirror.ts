@@ -15,9 +15,13 @@
  * The app is installed with the worker once (and again if the worker has lost it). If the worker can't render a
  * route, it passes the VM back and the page renders it. After each render, the title is set from the route, and
  * links in the container to the current page get `aria-current="page"`.
+ *
+ * With `transition`, in-app navigations are animated with a view transition: the worker's response is awaited first
+ * (the old page stays live meanwhile), then the swap and hydration run inside `document.startViewTransition`, so the
+ * new snapshot is taken once pending parts are finished. A newer navigation skips the running transition.
  */
 
-import type { AppRoute, Mirror, MirrorOptions, MirrorRendered, PreparedApp, RouteMatch } from './types/navigate-gingerly/types.js';
+import type { AppRoute, Mirror, MirrorOptions, MirrorRendered, MirrorTransition, PreparedApp, RouteMatch } from './types/navigate-gingerly/types.js';
 import { prepareApp } from './app.js';
 import { resolveModules } from './modules.js';
 import { matchRoute, pathBelow, titleFor, workerURL } from './routes.js';
@@ -27,7 +31,7 @@ const installed = new Set<string>();
 
 /** Mirror the page's path to the worker, now and on each in-app navigation (see the module comment). */
 export function mirror<Config, Options>(options: MirrorOptions<Config, Options>): Mirror {
-    const { app, into, renderer, onRender } = options;
+    const { app, into, renderer, onRender, transition } = options;
     const base = options.base ?? new URL(document.baseURI).pathname;
     const workerOf = () => (typeof options.worker === 'function' ? options.worker() : options.worker).replace(/\/+$/, '');
 
@@ -42,7 +46,41 @@ export function mirror<Config, Options>(options: MirrorOptions<Config, Options>)
         installed.add(`${worker} ${key}`);
     }
 
-    async function show(url: URL, signal?: AbortSignal): Promise<MirrorRendered> {
+    /** The path rendered last, and the transition running (if any) */
+    let current: string | undefined;
+    let active: ViewTransition | undefined;
+
+    /** The transition's types for a navigation, or undefined for none */
+    function typesFor(navigation: MirrorTransition): string[] | undefined {
+        const wanted = typeof transition === 'function' ? transition(navigation) : transition;
+        if (!wanted) return undefined;
+        return [navigation.direction, ...(Array.isArray(wanted) ? wanted : [])];
+    }
+
+    /** Change the container: within a view transition when there are types and the browser has them */
+    async function swap(change: () => Promise<void>, types: string[] | undefined): Promise<void> {
+        if (!types || typeof document.startViewTransition !== 'function') return change();
+        active?.skipTransition();
+        const root = document.documentElement;
+        let started: ViewTransition;
+        try {
+            started = document.startViewTransition({ update: change, types });
+        } catch {
+            // Without transition types (an older engine): the types as an attribute instead, while it runs
+            root.dataset.transitionTypes = types.join(' ');
+            started = document.startViewTransition(change);
+        }
+        active = started;
+        started.ready.catch(() => {});   // skipped by a newer navigation
+        started.finished.catch(() => {}).finally(() => {
+            if (active !== started) return;
+            active = undefined;
+            delete root.dataset.transitionTypes;
+        });
+        await started.updateCallbackDone;
+    }
+
+    async function show(url: URL, signal?: AbortSignal, direction?: MirrorTransition['direction']): Promise<MirrorRendered> {
         const path = pathBelow(base, url.pathname) ?? '/';
         const started = performance.now();
         const done = (rendered: Omit<MirrorRendered, 'path' | 'elapsed'>): MirrorRendered => {
@@ -69,21 +107,25 @@ export function mirror<Config, Options>(options: MirrorOptions<Config, Options>)
             }
             const { config } = route;
             const { options: appOptions } = resolved;
+            const types = direction && typesFor({ from: current, to: path, direction });
             if ((response.headers.get('Content-Type') ?? '').startsWith('text/html')) {
                 const html = await response.text();
                 signal?.throwIfAborted();
-                into.innerHTML = html;
-                const vm = renderer.embedded(into, config);
-                const { pending = 0 } = (await renderer.hydrate(into, config, vm, appOptions)) ?? {};
-                finish(route, vm);
+                let vm: unknown, pending = 0;
+                await swap(async () => {
+                    into.innerHTML = html;
+                    vm = renderer.embedded(into, config);
+                    ({ pending = 0 } = (await renderer.hydrate(into, config, vm, appOptions)) ?? {});
+                }, types);
+                finish(route, vm, path);
                 return done({ by: 'worker', vm, route: index, pending });
             }
             if (!response.ok) throw new Error(await errorOf(response));
             // The VM, passed back: render it here
             const vm = await response.json();
             signal?.throwIfAborted();
-            await renderer.render(into, config, vm, appOptions);
-            finish(route, vm);
+            await swap(async () => { await renderer.render(into, config, vm, appOptions); }, types);
+            finish(route, vm, path);
             return done({ by: 'page', vm, route: index, pending: 0, error: response.headers.get('X-O2H-Error') ?? undefined });
         } catch (e) {
             if ((e as Error).name === 'AbortError') throw e;   // a newer navigation took over
@@ -92,7 +134,8 @@ export function mirror<Config, Options>(options: MirrorOptions<Config, Options>)
     }
 
     /** After a render: the title, and which links are the current page. */
-    function finish(route: AppRoute<Config>, vm: unknown): void {
+    function finish(route: AppRoute<Config>, vm: unknown, path: string): void {
+        current = path;
         const title = titleFor(route, vm);
         if (title !== undefined) document.title = title;
         markCurrent(into, location.href);
@@ -106,8 +149,11 @@ export function mirror<Config, Options>(options: MirrorOptions<Config, Options>)
         if (url.origin !== location.origin) return;
         const path = pathBelow(base, url.pathname);
         if (path === undefined) return;
+        // Back: a traverse to an earlier entry. A reload isn't animated.
+        const back = event.navigationType === 'traverse' && event.destination.index < navigation.currentEntry.index;
+        const direction = event.navigationType === 'reload' ? undefined : back ? 'back' : 'forward';
         event.intercept({
-            handler: () => show(url, event.signal),
+            handler: () => show(url, event.signal, direction),
             scroll: 'after-transition',
             focusReset: 'after-transition',
         });
