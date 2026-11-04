@@ -23,7 +23,7 @@ async function serve(page: Page): Promise<Worker> {
     const worker: Worker = { installs: [], renders: [], lose: false };
     await page.route(`${ORIGIN}/**`, async (route: Route) => {
         const request = route.request();
-        const { pathname } = new URL(request.url());
+        const { pathname, search } = new URL(request.url());
         if (pathname.startsWith('/src/')) {
             const file = new URL(pathname.slice('/src/'.length), root);
             return fs.existsSync(file) ? route.fulfill({ contentType: 'text/javascript', body: fs.readFileSync(file, 'utf8') }) : route.fulfill({ status: 404 });
@@ -36,7 +36,7 @@ async function serve(page: Page): Promise<Worker> {
                 worker.lose = false;
                 return route.fulfill({ status: 204 });
             }
-            worker.renders.push(path);
+            worker.renders.push(path + search);
             const json = (status: number, body: unknown, headers = {}) => route.fulfill({ status, contentType: 'application/json', headers, body: JSON.stringify(body) });
             if (worker.lose) return json(404, { error: `no app "${key}"` });
             if (path === '/') return route.fulfill({ contentType: 'text/html; charset=utf-8', body: list() });
@@ -45,7 +45,7 @@ async function serve(page: Page): Promise<Worker> {
             if (!id || !products[id]) return json(404, { error: 'the source "data": the API answered 404' });
             return route.fulfill({
                 contentType: 'text/html; charset=utf-8',
-                body: fragment(`<article><h2>${products[id].title}</h2><a href="./">All</a> <a href="products/${id}">This</a></article>`, { data: products[id], route: { id } }),
+                body: fragment(`<article><h2>${products[id].title}</h2><a href="./">All</a> <a href="products/${id}">This</a><form action="products/${id}"><input name="detail" value="short"><input name="other" value="x"><button>Go</button></form></article>`, { data: products[id], route: { id } }),
             });
         }
         if (pathname.startsWith('/app')) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: shell });
@@ -205,4 +205,20 @@ test('transition: a newer navigation skips the running transition, and the newer
     expect(page.url()).toBe(`${ORIGIN}/app/products/2`);
     await expect(page).toHaveTitle('Hat');
     await expect.poll(() => page.evaluate(() => document.documentElement.dataset.transitionTypes ?? null)).toBeNull();
+});
+
+test("query: only the route's parameters reach the worker, and a GET form asks for them", async ({ page }) => {
+    const worker = await serve(page);
+    await page.goto(`${ORIGIN}/app/products/1?other=x&detail=full`);
+    await expect(page.locator('main h2')).toHaveText('Bag');
+    expect(worker.renders).toEqual(['/products/1?detail=full']);
+    expect(await lastRender(page)).toMatchObject({ by: 'worker', path: '/products/1?detail=full' });
+    // The form's fields: detail goes through, other doesn't
+    await page.locator('main button').click();
+    await expect.poll(() => worker.renders.length).toBe(2);
+    expect(worker.renders[1]).toBe('/products/1?detail=short');
+    expect(page.url()).toBe(`${ORIGIN}/app/products/1?detail=short&other=x`);
+    await expect(page.locator('main h2')).toHaveText('Bag');
+    // With the Navigation API, the form was intercepted: the shell loaded once
+    if (await hasNavigation(page)) expect(await page.evaluate(() => (window as any).loads)).toBe(1);
 });

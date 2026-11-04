@@ -16,7 +16,7 @@ import { paramsOf, PLACEHOLDER, ROUTE_KEY } from './routes.js';
 /**
  * Throws, naming the problem, if the app (authored or installed) isn't well formed: patterns, placeholders
  * that aren't parameters of their route, layout placeholders, a source named `route`, relative sources with no
- * `api`. A worker checks installed apps with this too, since anyone may install one.
+ * `api`, a `query` on a mapped route (or naming a path parameter). A worker checks installed apps with this too, since anyone may install one.
  */
 export function validateApp(app) {
     if (!app || typeof app !== 'object' || !Array.isArray(app.routes))
@@ -46,10 +46,31 @@ export function validateApp(app) {
             checkSources(route.sources, params, where, api);
         else if (!api)
             throw new Error(`navigate-gingerly: ${where} is aligned (no sources), so the app needs an api`);
+        if (route.query !== undefined)
+            checkQuery(route.query, params, where, route.sources !== undefined);
         if (route.title !== undefined && typeof route.title !== 'string')
             throw new Error(`navigate-gingerly: ${where}: the title must be a string`);
     });
 }
+/** A route's `query`: names (as an API would take them), on an aligned route, not shadowing its path's parameters. */
+function checkQuery(query, params, where, mapped) {
+    if (mapped)
+        throw new Error(`navigate-gingerly: ${where}: query passes parameters through to the API's same path, so it's for aligned routes (no sources)`);
+    if (!Array.isArray(query))
+        throw new Error(`navigate-gingerly: ${where}: query must be an array of parameter names`);
+    const seen = new Set();
+    for (const name of query) {
+        if (typeof name !== 'string' || !QUERY_NAME.test(name))
+            throw new Error(`navigate-gingerly: ${where}: "${name}" in query isn't a parameter name`);
+        if (seen.has(name))
+            throw new Error(`navigate-gingerly: ${where}: "${name}" is in query twice`);
+        if (params.includes(name))
+            throw new Error(`navigate-gingerly: ${where}: "${name}" is a parameter of the path too, and both go in the VM's route`);
+        seen.add(name);
+    }
+}
+/** A query parameter's name: letters, digits, and `_ . -` */
+const QUERY_NAME = /^[\w.-]+$/;
 function checkSources(sources, params, where, api) {
     if (!sources || typeof sources !== 'object' || Array.isArray(sources))
         throw new Error(`navigate-gingerly: ${where}: sources must be an object of URLs`);
@@ -82,7 +103,7 @@ export async function prepareApp(app, prepare) {
     const byConfig = new Map();
     const installedRoutes = [];
     for (let i = 0; i < routes.length; i++) {
-        const { pattern, sources, layout: withLayout, title, config } = routes[i];
+        const { pattern, sources, layout: withLayout, query, title, config } = routes[i];
         let pending = byConfig.get(config);
         if (!pending)
             byConfig.set(config, (pending = prepare(config, options)));
@@ -95,6 +116,7 @@ export async function prepareApp(app, prepare) {
             pattern,
             ...(sources !== undefined && { sources }),
             ...(withLayout !== undefined && { layout: withLayout }),
+            ...(query !== undefined && { query }),
             ...(title !== undefined && { title }),
             transform: key,
         });

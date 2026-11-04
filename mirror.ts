@@ -2,7 +2,8 @@
  * mirror: the page side. The app's own server serves its shell (an SPA fallback for deep paths); mirror asks the
  * worker for the same path, mirrored (`<worker>/o2h-app/<key><path below the base>`), puts the fragment it gets
  * into a container, and hydrates it. In-app navigations are intercepted with the Navigation API and rendered the
- * same way, so Back, Forward, scroll and focus are the browser's. Without the Navigation API, links are ordinary
+ * same way, so Back, Forward, scroll and focus are the browser's. Of the page's query string, only the parameters
+ * the route lets through (`query`) go to the worker, so a plain GET form can ask for them. Without the Navigation API, links are ordinary
  * navigations: the shell loads again, and mirror renders the new path.
  *
  *     <base href="/store/">   (in the shell: the app's base, which relative links in the app's trees resolve against)
@@ -24,7 +25,7 @@
 import type { AppRoute, Mirror, MirrorOptions, MirrorRendered, MirrorTransition, PreparedApp, RouteMatch } from './types/navigate-gingerly/types.js';
 import { prepareApp } from './app.js';
 import { resolveModules } from './modules.js';
-import { matchRoute, pathBelow, titleFor, workerURL } from './routes.js';
+import { matchRoute, pathBelow, searchOf, titleFor, workerURL } from './routes.js';
 
 /** `<worker> <key>`: the apps each worker is known to hold. */
 const installed = new Set<string>();
@@ -81,7 +82,9 @@ export function mirror<Config, Options>(options: MirrorOptions<Config, Options>)
     }
 
     async function show(url: URL, signal?: AbortSignal, direction?: MirrorTransition['direction']): Promise<MirrorRendered> {
-        const path = pathBelow(base, url.pathname) ?? '/';
+        const below = pathBelow(base, url.pathname) ?? '/';
+        // Reported as the path below the base, with the query parameters the route lets through (once matched)
+        let path = below;
         const started = performance.now();
         const done = (rendered: Omit<MirrorRendered, 'path' | 'elapsed'>): MirrorRendered => {
             const result = { path, elapsed: Math.round(performance.now() - started), ...rendered };
@@ -90,9 +93,10 @@ export function mirror<Config, Options>(options: MirrorOptions<Config, Options>)
         };
         try {
             const resolved = await resolving;
-            const match = matchRoute(resolved, path) as RouteMatch<AppRoute<Config>> | undefined;
+            const match = matchRoute(resolved, below + url.search) as RouteMatch<AppRoute<Config>> | undefined;
             if (!match) return done({ by: 'none', pending: 0, error: `no route of the app matches "${path}"` });
             const { route, index } = match;
+            path = below + searchOf(match);
             const worker = workerOf();
             const app = await prepared();
             const request = async () => {

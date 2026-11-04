@@ -43,11 +43,16 @@ The first route that matches wins.
 ```
 
 - **Aligned routes** (no `sources`, the default): the path is the API's path. `/products/3` fetches
-  `https://fakestoreapi.com/products/3`, as the source named `data`. A visitor's query string isn't passed on, and
-  a path can't climb out of the `api` (`..`).
+  `https://fakestoreapi.com/products/3`, as the source named `data`. A path can't climb out of the `api` (`..`).
+- **`query`** (aligned routes): the query parameters passed from the page's URL to the API's, **by the same names**, so
+  the page's URL keeps the API's structure. With `query: ['startyear', 'endyear']`,
+  `/timeseries/data/X?startyear=2015&endyear=2020` fetches `<api>/timeseries/data/X?startyear=2015&endyear=2020`.
+  Only those names pass (any other parameter is dropped), the first value of each, and only when not empty, so a
+  plain GET form whose fields are named after them works, blank fields included. They're in the VM's `route` too
+  (`?.route?.startyear`), so the form can show them. Without `query`, a visitor's query string isn't passed on.
 - **Mapped routes** (`sources`): for pages the path alone can't name. Source URLs are relative to the `api` (or
   absolute), with `{name}` placeholders filled from the path's parameters, URI-encoded.
-- **The VM a route renders** is `{ route, ...sources }`: `route` holds the path's parameters (`{ id: '3' }`), and
+- **The VM a route renders** is `{ route, ...sources }`: `route` holds the path's parameters (`{ id: '3' }`) and its `query` ones, and
   each source its JSON. `config` is a builtIns.tree config for that VM.
 - **`title`** is literal text, or a path into the VM.
 - **Code** (function pipes, managers) is a module reference, `{ "import": "./pipes.js", "export": "plainText" }`,
@@ -59,7 +64,7 @@ The core is pure (no DOM, no fetch, no o2h), so the page and the worker share it
 
 | Module | Exports |
 |---|---|
-| `routes.js` | `matchRoute(app, path)`, `sourcesFor(app, match)`, `composeVM(match, results)`, `titleFor(route, vm)`, `pathBelow(base, pathname)`, `workerURL(worker, key, path)` |
+| `routes.js` | `matchRoute(app, path)`, `queryOf(route, path)`, `searchOf(match)`, `sourcesFor(app, match)`, `composeVM(match, results)`, `titleFor(route, vm)`, `pathBelow(base, pathname)`, `workerURL(worker, key, path)` |
 | `app.js` | `validateApp(app)`, `prepareApp(app, prepareTransform)` (o2h's `prepareO2HTransform` fits), `appKey(installed)` |
 | `modules.js` | `resolveModules(app, appURL)`, `isModuleReference(value)` |
 | `mirror.js` | `mirror(options)`, `markCurrent(container, href)`: the page side (below) |
@@ -92,7 +97,7 @@ The app's own server serves its shell for every path under the app (an SPA fallb
 
 - **The path below the base is mirrored to the worker:** `/store/products/3` → `<worker>/o2h-app/<key>/products/3`. The worker ([o2h-edge](https://github.com/bahrus/o2h-edge)) fetches the route's sources and returns one HTML fragment, with the VM embedded. mirror puts it in `into`, and the renderer hydrates it.
 - **Installs the app** (`prepareApp`, then `PUT <worker>/o2h-app/<key>`) once per worker, and again, once, if the worker answers `no app`.
-- **In-app navigations** (same origin, under the base) are intercepted with the Navigation API, so Back, Forward, scroll and focus are the browser's. Without the Navigation API, links are ordinary navigations, and the shell renders the new path.
+- **In-app navigations** (same origin, under the base) are intercepted with the Navigation API, so Back, Forward, scroll and focus are the browser's. Without the Navigation API, links are ordinary navigations, and the shell renders the new path. Of the page's query string, only the route's `query` parameters go to the worker; GET forms are intercepted like links.
 - **Links in the app's trees are relative** (`href="products/3"`), resolving against the `<base href>`, so an app works under any base.
 - **After each render:** the title comes from the route, and links in the container to the current page get `aria-current="page"`.
 - **Falls back:** if the worker passes the VM back, the page renders it. Failures are reported to `onRender`, and the container is left as it was.

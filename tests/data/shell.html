@@ -29,7 +29,7 @@
             api: 'https://api.test',
             routes: [
                 { pattern: '/', sources: { data: '/products' }, config: { map: { data: 'list' } }, title: 'Home' },
-                { pattern: '/products/:id', config: { map: { data: 'item' } }, title: '?.data?.title' },
+                { pattern: '/products/:id', query: ['detail'], config: { map: { data: 'item' } }, title: '?.data?.title' },
             ],
         };
         window.renders = [];

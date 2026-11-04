@@ -8,8 +8,9 @@
  *     const vm = composeVM(match, { categories: [...], data: {...} });   // { route: { id: '3' }, categories, data }
  *     document.title = titleFor(match.route, vm) ?? document.title;
  *
- * Aligned routes (no `sources`) fetch the path itself under the app's `api`, as the source `data`. Mapped routes
- * name their sources, with `{name}` placeholders filled from the path's parameters, URI-encoded.
+ * Aligned routes (no `sources`) fetch the path itself under the app's `api`, as the source `data`, with the query
+ * parameters the route lets through (`query`), by the same names. Mapped routes name their sources, with `{name}`
+ * placeholders filled from the path's parameters, URI-encoded.
  */
 
 import type { AppLike, RouteLike, RouteMatch } from './types/navigate-gingerly/types.js';
@@ -17,7 +18,7 @@ import type { AppLike, RouteLike, RouteMatch } from './types/navigate-gingerly/t
 // For consumers (the package's exports don't reach into types/)
 export type {
     AppLike, AppRoute, InstalledApp, InstalledRoute, ModuleReference, NavigateApp, PreparedApp, PreparedTransform,
-    PrepareTransform, RouteLike, RouteMatch, Mirror, MirrorOptions, MirrorRenderer, MirrorRendered,
+    PrepareTransform, RouteLike, RouteMatch, Mirror, MirrorOptions, MirrorRenderer, MirrorRendered, MirrorTransition,
 } from './types/navigate-gingerly/types.js';
 
 /** The source name an aligned route's API response gets in the VM. */
@@ -88,9 +89,32 @@ export function matchRoute<Route extends RouteLike>(app: AppLike<Route>, path: s
     for (let index = 0; index < routes.length; index++) {
         const route = routes[index];
         const params = matchPattern(route.pattern, path);
-        if (params) return { route, index, params, path };
+        if (params) return { route, index, params, path, query: queryOf(route, path) };
     }
     return undefined;
+}
+
+/**
+ * The query parameters a route lets through (`query`), from the path's query string: the first value of each,
+ * decoded, and only when not empty (a GET form's blank field). Others are dropped.
+ */
+export function queryOf(route: RouteLike, path: string): Record<string, string> {
+    const query: Record<string, string> = {};
+    const { query: names } = route;
+    const at = path.indexOf('?');
+    if (!names?.length || at < 0) return query;
+    const search = new URLSearchParams(path.slice(at + 1).split('#')[0]);
+    for (const name of names) {
+        const value = search.get(name);
+        if (value) query[name] = value;
+    }
+    return query;
+}
+
+/** A match's query parameters as a query string (`?startyear=2015&endyear=2020`), or `''` for none. */
+export function searchOf(match: Pick<RouteMatch, 'query'>): string {
+    const search = new URLSearchParams(match.query ?? {}).toString();
+    return search ? `?${search}` : '';
 }
 
 /**
@@ -100,7 +124,7 @@ export function matchRoute<Route extends RouteLike>(app: AppLike<Route>, path: s
  */
 export function sourcesFor(app: AppLike, match: RouteMatch): Record<string, string> {
     const { api, layout } = app;
-    const { route, params, path } = match;
+    const { route, params, path, query } = match;
     const urls: Record<string, string> = {};
     if (layout && route.layout !== false) {
         for (const [name, url] of Object.entries(layout)) urls[name] = resolve(api, url);
@@ -108,7 +132,7 @@ export function sourcesFor(app: AppLike, match: RouteMatch): Record<string, stri
     if (route.sources) {
         for (const [name, url] of Object.entries(route.sources)) urls[name] = resolve(api, fill(url, params));
     } else {
-        urls[ALIGNED_SOURCE] = aligned(api, path);
+        urls[ALIGNED_SOURCE] = aligned(api, path) + searchOf({ query });
     }
     return urls;
 }
@@ -142,7 +166,7 @@ function resolve(api: string | undefined, url: string): string {
 /** An aligned path, under the API: `https://x.com/v2` and `/products/3` → `https://x.com/v2/products/3`. */
 function aligned(api: string | undefined, path: string): string {
     if (!api) throw new Error('navigate-gingerly: an aligned route (no sources) needs the app\'s api');
-    // The path only: a visitor's query string doesn't reach the API
+    // The path only: the visitor's query string doesn't reach the API (bar the route's `query`, added by sourcesFor)
     return under(api, path.split(/[?#]/)[0]);
 }
 
@@ -163,9 +187,9 @@ function withSlash(url: string): string {
     return url.endsWith('/') ? url : `${url}/`;
 }
 
-/** The VM a route renders: `{ route: params, ...sources }`. */
+/** The VM a route renders: `{ route: { ...params, ...query }, ...sources }`. */
 export function composeVM(match: RouteMatch, results: Record<string, unknown>): Record<string, unknown> {
-    return { ...results, [ROUTE_KEY]: match.params };
+    return { ...results, [ROUTE_KEY]: { ...match.params, ...match.query } };
 }
 
 /** The route's title for a VM: literal text, or a path into it (`?.data?.title`). Undefined if it has none, or the path leads nowhere. */

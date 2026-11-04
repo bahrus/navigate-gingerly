@@ -69,6 +69,29 @@ test.describe('routes', () => {
     expect(sourcesFor(mapped, matchRoute(mapped, '/people/a%2Fb')).person).toBe('https://api.example.com/v2/people?name=a%2Fb&full=1');
   });
 
+  test('query: an aligned route lets named parameters through, by the same names, into the API URL and the VM', async () => {
+    const { matchRoute, sourcesFor, composeVM, searchOf } = await import(url('routes.js'));
+    const app = { api: 'https://api.bls.gov/publicAPI/v2', routes: [{ pattern: '/timeseries/data/:id', query: ['startyear', 'endyear'] }] };
+    const match = matchRoute(app, '/timeseries/data/LNS14000000?endyear=2020&api_key=x&startyear=2015&startyear=1990#t');
+    // Only the route's names, the first value of each, in the route's order
+    expect(match.query).toEqual({ startyear: '2015', endyear: '2020' });
+    expect(sourcesFor(app, match).data).toBe('https://api.bls.gov/publicAPI/v2/timeseries/data/LNS14000000?startyear=2015&endyear=2020');
+    expect(composeVM(match, { data: 1 }).route).toEqual({ id: 'LNS14000000', startyear: '2015', endyear: '2020' });
+    expect(searchOf(match)).toBe('?startyear=2015&endyear=2020');
+    // A GET form's blank fields are dropped; none at all: no query string
+    const blank = matchRoute(app, '/timeseries/data/X?startyear=&endyear=');
+    expect(blank.query).toEqual({});
+    expect(sourcesFor(app, blank).data).toBe('https://api.bls.gov/publicAPI/v2/timeseries/data/X');
+    expect(searchOf(blank)).toBe('');
+    // Decoded, then encoded again for the API
+    const odd = matchRoute(app, '/timeseries/data/X?startyear=a%26b%3Dc');
+    expect(odd.query).toEqual({ startyear: 'a&b=c' });
+    expect(sourcesFor(app, odd).data).toBe('https://api.bls.gov/publicAPI/v2/timeseries/data/X?startyear=a%26b%3Dc');
+    // A route without query: nothing passes
+    const store_ = store();
+    expect(matchRoute(store_, '/products/3?startyear=1').query).toEqual({});
+  });
+
   test("an aligned path can't climb out of the api", async () => {
     const { sourcesFor } = await import(url('routes.js'));
     const app = { api: 'https://api.example.com/v2', routes: [{ pattern: '/a/:x/:y' }] };
@@ -118,6 +141,13 @@ test.describe('apps', () => {
     expect(() => validateApp({ api: 'https://x.com', routes: [{ pattern: '/p/:id', sources: { p: '/p/{pid}' } }] })).toThrow("isn't one of its parameters (id)");
     expect(() => validateApp({ api: 'https://x.com', layout: { nav: '/nav/{id}' }, routes: [] })).toThrow('has no parameter to fill it');
     expect(() => validateApp({ api: 'https://x.com', routes: [{ pattern: '/', sources: { route: '/r' } }] })).toThrow("can't name a source");
+    // query: aligned routes only, names, once each, not a path parameter
+    expect(() => validateApp({ api: 'https://x.com', routes: [{ pattern: '/s/:id', query: ['from', 'to'] }] })).not.toThrow();
+    expect(() => validateApp({ api: 'https://x.com', routes: [{ pattern: '/', sources: { a: '/a' }, query: ['from'] }] })).toThrow('for aligned routes');
+    expect(() => validateApp({ api: 'https://x.com', routes: [{ pattern: '/', query: 'from' }] })).toThrow('must be an array');
+    expect(() => validateApp({ api: 'https://x.com', routes: [{ pattern: '/', query: ['a&b'] }] })).toThrow("isn't a parameter name");
+    expect(() => validateApp({ api: 'https://x.com', routes: [{ pattern: '/', query: ['a', 'a'] }] })).toThrow('in query twice');
+    expect(() => validateApp({ api: 'https://x.com', routes: [{ pattern: '/s/:id', query: ['id'] }] })).toThrow('a parameter of the path too');
   });
 
   test('resolveModules loads module references, relative to the app', async () => {
@@ -151,6 +181,9 @@ test.describe('apps', () => {
     // Code is stand-ins; the result is plain JSON
     expect(transforms[routes[4].transform].options.pipes.plainText).toEqual({ $lost: 'plainText' });
     expect(JSON.parse(JSON.stringify(prepared.app))).toEqual(prepared.app);
+    // A route's query is installed with it
+    const withQuery = (await prepareApp({ api: 'https://x.com', routes: [{ pattern: '/s/:id', query: ['from', 'to'], config: {} }] }, prepare)).app;
+    expect(withQuery.routes[0]).toEqual({ pattern: '/s/:id', query: ['from', 'to'], transform: withQuery.routes[0].transform });
 
     // The same app, the same key; a changed one, a new key
     expect((await prepareApp(app, prepare)).key).toBe(prepared.key);
