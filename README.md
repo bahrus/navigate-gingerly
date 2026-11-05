@@ -57,6 +57,9 @@ The first route that matches wins.
 - **`title`** is literal text, or a path into the VM.
 - **Code** (function pipes, managers) is a module reference, `{ "import": "./pipes.js", "export": "plainText" }`,
   resolved relative to the app's URL.
+- **Data pipes aren't code:** in `options.pipes`, a descriptor such as `{ "sum": "?.quantity" }` is plain JSON, so it
+  needs no module reference, and the app never calls `dataPipes`. This package only passes `options` along: see
+  o2h's [Data pipes survive](https://github.com/bahrus/o2h#data-pipes-survive).
 
 ## The modules (so far)
 
